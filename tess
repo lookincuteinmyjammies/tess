@@ -3,22 +3,19 @@ CheckpointServer
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local checkpointsFolder = workspace:WaitForChild("Checkpoints")
+local folder = workspace:WaitForChild("Checkpoints")
 
--- Событие для изменения внешнего вида только у нужного игрока.
-local activatedEvent = ReplicatedStorage:FindFirstChild("CheckpointActivated")
+local event = ReplicatedStorage:FindFirstChild("CheckpointActivated")
 
-if not activatedEvent then
-	activatedEvent = Instance.new("RemoteEvent")
-	activatedEvent.Name = "CheckpointActivated"
-	activatedEvent.Parent = ReplicatedStorage
+if not event then
+	event = Instance.new("RemoteEvent")
+	event.Name = "CheckpointActivated"
+	event.Parent = ReplicatedStorage
 end
 
--- Последний чекпоинт каждого игрока.
-local playerCheckpoints = {}
+local checkpoints = {}
 
--- Находим игрока, даже если чекпоинта коснулась
--- не часть тела, а, например, аксессуар.
+-- Находим игрока по коснувшейся части персонажа.
 local function getPlayerFromHit(hit)
 	local current = hit
 
@@ -37,41 +34,15 @@ local function getPlayerFromHit(hit)
 	return nil, nil
 end
 
-local function getRespawnCFrame(checkpoint)
-	local checkpointType = checkpoint:GetAttribute("CheckpointType")
-
-	if checkpointType == "Zone" then
-		-- Точка внутри области, примерно на 3 studs выше её низа.
-		return checkpoint.CFrame * CFrame.new(
-			0,
-			-checkpoint.Size.Y / 2 + 3,
-			0
-		)
-	else
-		-- Точка над кнопкой.
-		return checkpoint.CFrame * CFrame.new(
-			0,
-			checkpoint.Size.Y / 2 + 3,
-			0
-		)
-	end
-end
-
-local function connectCheckpoint(checkpoint)
-	if not checkpoint:IsA("BasePart") then
+local function connectZone(zone)
+	if not zone:IsA("BasePart") then
 		return
 	end
 
-	checkpoint.Touched:Connect(function(hit)
-		local checkpointType = checkpoint:GetAttribute("CheckpointType")
-
-		if checkpointType ~= "Button" and checkpointType ~= "Zone" then
-			return
-		end
-
+	zone.Touched:Connect(function(hit)
 		local player, character = getPlayerFromHit(hit)
 
-		if not player or not character then
+		if not player then
 			return
 		end
 
@@ -81,34 +52,39 @@ local function connectCheckpoint(checkpoint)
 			return
 		end
 
-		-- Несколько частей тела могут коснуться детали подряд.
-		-- Повторно активировать текущий чекпоинт не нужно.
-		if playerCheckpoints[player] == checkpoint then
+		if checkpoints[player] == zone then
 			return
 		end
 
-		playerCheckpoints[player] = checkpoint
+		-- Новая зона заменяет предыдущий чекпоинт.
+		checkpoints[player] = zone
 
-		-- Сообщаем об активации только этому игроку.
-		activatedEvent:FireClient(player, checkpoint)
+		-- Скрываем зону только для этого игрока.
+		event:FireClient(player, zone)
 	end)
 end
 
 local function onCharacterAdded(player, character)
-	local rootPart = character:WaitForChild("HumanoidRootPart", 10)
+	local root = character:WaitForChild("HumanoidRootPart", 10)
 
-	if not rootPart or player.Character ~= character then
+	if not root or player.Character ~= character then
 		return
 	end
 
-	local checkpoint = playerCheckpoints[player]
+	local zone = checkpoints[player]
 
-	if checkpoint and checkpoint:IsDescendantOf(workspace) then
-		character:PivotTo(getRespawnCFrame(checkpoint))
+	if zone and zone:IsDescendantOf(workspace) then
+		-- Возрождаем в центре зоны, на 3 studs выше её низа.
+		local spawnCFrame = zone.CFrame * CFrame.new(
+			0,
+			-zone.Size.Y / 2 + 3,
+			0
+		)
 
-		-- Убираем остаточную скорость после перемещения.
-		rootPart.AssemblyLinearVelocity = Vector3.zero
-		rootPart.AssemblyAngularVelocity = Vector3.zero
+		character:PivotTo(spawnCFrame)
+
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
 	end
 end
 
@@ -122,13 +98,11 @@ local function setupPlayer(player)
 	end
 end
 
--- Подключаем существующие чекпоинты.
-for _, checkpoint in checkpointsFolder:GetChildren() do
-	connectCheckpoint(checkpoint)
+for _, zone in folder:GetChildren() do
+	connectZone(zone)
 end
 
--- Подключаем и те, которые добавятся во время игры.
-checkpointsFolder.ChildAdded:Connect(connectCheckpoint)
+folder.ChildAdded:Connect(connectZone)
 
 Players.PlayerAdded:Connect(setupPlayer)
 
@@ -137,7 +111,7 @@ for _, player in Players:GetPlayers() do
 end
 
 Players.PlayerRemoving:Connect(function(player)
-	playerCheckpoints[player] = nil
+	checkpoints[player] = nil
 end)
 
 
@@ -147,22 +121,13 @@ CheckpointVisuals
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local activatedEvent = ReplicatedStorage:WaitForChild("CheckpointActivated")
+local event = ReplicatedStorage:WaitForChild("CheckpointActivated")
 
-activatedEvent.OnClientEvent:Connect(function(checkpoint)
-	if not checkpoint or not checkpoint:IsA("BasePart") then
+event.OnClientEvent:Connect(function(zone)
+	if not zone or not zone:IsA("BasePart") then
 		return
 	end
 
-	local checkpointType = checkpoint:GetAttribute("CheckpointType")
-
-	if checkpointType == "Zone" then
-		-- Область становится полностью невидимой
-		-- только для активировавшего её игрока.
-		checkpoint.LocalTransparencyModifier = 1
-
-	elseif checkpointType == "Button" then
-		-- Кнопка становится зелёной только у этого игрока.
-		checkpoint.Color = Color3.fromRGB(70, 255, 100)
-	end
+	-- Полностью скрываем зону для текущего игрока.
+	zone.LocalTransparencyModifier = 1
 end)
